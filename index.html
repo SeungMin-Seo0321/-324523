@@ -122,22 +122,43 @@ const L={
 };
 
 // ── Math ─────────────────────────────────────────────────────────────────────
+// Column-major 4x4: index = col*4 + row
 const M={
-  id:()=>new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]),
+  id:()=>new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
+  // C = A * B  (column-major)
   mul(a,b){
     const r=new Float32Array(16);
-    for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++)r[i*4+j]+=a[i*4+k]*b[k*4+j];
+    for(let col=0;col<4;col++)
+      for(let row=0;row<4;row++)
+        for(let k=0;k<4;k++)
+          r[col*4+row]+=a[k*4+row]*b[col*4+k];
     return r;
   },
   persp(fov,asp,n,f){
     const t=1/Math.tan(fov/2),r=new Float32Array(16);
-    r[0]=t/asp;r[5]=t;r[10]=(f+n)/(n-f);r[11]=-1;r[14]=2*f*n/(n-f);return r;
+    // column-major
+    r[0]=t/asp; r[5]=t;
+    r[10]=(f+n)/(n-f); r[14]=2*f*n/(n-f);
+    r[11]=-1;
+    return r;
   },
   tr(x,y,z){const r=M.id();r[12]=x;r[13]=y;r[14]=z;return r;},
-  rx(a){const c=Math.cos(a),s=Math.sin(a),r=M.id();r[5]=c;r[6]=s;r[9]=-s;r[10]=c;return r;},
-  ry(a){const c=Math.cos(a),s=Math.sin(a),r=M.id();r[0]=c;r[2]=-s;r[8]=s;r[10]=c;return r;},
-  nm(m){// upper-left 3x3 as Float32Array (column-major)
-    return new Float32Array([m[0],m[1],m[2],m[4],m[5],m[6],m[8],m[9],m[10]]);
+  rx(a){
+    // col-major: r[col*4+row]
+    const c=Math.cos(a),s=Math.sin(a),r=M.id();
+    r[1*4+1]=c; r[1*4+2]=s;   // col1
+    r[2*4+1]=-s; r[2*4+2]=c;  // col2
+    return r;
+  },
+  ry(a){
+    const c=Math.cos(a),s=Math.sin(a),r=M.id();
+    r[0*4+0]=c; r[0*4+2]=s;   // col0
+    r[2*4+0]=-s; r[2*4+2]=c;  // col2
+    return r;
+  },
+  nm(m){
+    // upper-left 3x3 from column-major mat4
+    return new Float32Array([m[0],m[1],m[2], m[4],m[5],m[6], m[8],m[9],m[10]]);
   }
 };
 
@@ -354,6 +375,7 @@ canvas.addEventListener('touchmove',e=>{
 
 // ── Render ───────────────────────────────────────────────────────────────────
 gl.enable(gl.DEPTH_TEST);
+gl.disable(gl.CULL_FACE);
 gl.clearColor(1,1,1,1);
 
 function draw(){
