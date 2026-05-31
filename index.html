@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>3D Model Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #ffffff;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Courier New', monospace;
+    }
+
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    canvas {
+      display: block;
+      cursor: grab;
+    }
+    canvas:active { cursor: grabbing; }
+
+    /* Drop overlay */
+    #drop-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.03);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      z-index: 10;
+      pointer-events: none;
+      transition: opacity 0.4s;
+    }
+    #drop-overlay.hidden { opacity: 0; pointer-events: none; }
+    #drop-overlay.visible { opacity: 1; pointer-events: all; }
+
+    .drop-icon {
+      font-size: 64px;
+      opacity: 0.25;
+      animation: float 3s ease-in-out infinite;
+    }
+    .drop-label {
+      font-size: 13px;
+      letter-spacing: 0.15em;
+      color: #aaa;
+      text-transform: uppercase;
+    }
+    .drop-sub {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      color: #ccc;
+      text-transform: uppercase;
+    }
+    #file-btn {
+      margin-top: 8px;
+      padding: 10px 28px;
+      background: transparent;
+      border: 1px solid #ccc;
+      color: #999;
+      font-family: 'Courier New', monospace;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: all 0.2s;
+      pointer-events: all;
+    }
+    #file-btn:hover { border-color: #888; color: #555; }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
+    }
+
+    /* Info HUD */
+    #hud {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 32px;
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      color: #bbb;
+      text-transform: uppercase;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.5s;
+    }
+    #hud.visible { opacity: 1; }
+
+    #model-name {
+      position: fixed;
+      top: 28px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      color: #ccc;
+      text-transform: uppercase;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.5s;
+      white-space: nowrap;
+    }
+    #model-name.visible { opacity: 1; }
+
+    /* Drag-over highlight */
+    body.dragover::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      border: 2px dashed #ccc;
+      pointer-events: none;
+      z-index: 999;
+    }
+
+    /* Hidden file input */
+    #file-input { display: none; }
+  </style>
+</head>
+<body>
+
+<div id="canvas-container">
+  <canvas id="gl-canvas"></canvas>
+</div>
+
+<div id="drop-overlay" class="visible">
+  <div class="drop-icon">⬡</div>
+  <div class="drop-label">Drop your OBJ file here</div>
+  <div class="drop-sub">Textures: drop MTL + image files together</div>
+  <button id="file-btn" onclick="document.getElementById('file-input').click()">or browse files</button>
+</div>
+
+<input type="file" id="file-input" multiple accept=".obj,.mtl,.png,.jpg,.jpeg,.webp" />
+
+<div id="hud">
+  <span>drag to rotate</span>
+  <span>scroll to zoom</span>
+  <span>right drag to pan</span>
+</div>
+<div id="model-name"></div>
+
+<script>
+// ─── WebGL setup ─────────────────────────────────────────────────────────────
+const canvas = document.getElementById('gl-canvas');
+const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+if (!gl) alert('WebGL is not supported in this browser.');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  gl.viewport(0, 0, canvas.width, canvas.height);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Shaders ─────────────────────────────────────────────────────────────────
+const VS = `
+  attribute vec3 aPos;
+  attribute vec3 aNorm;
+  attribute vec2 aUV;
+  uniform mat4 uMVP;
+  uniform mat4 uModel;
+  varying vec3 vNorm;
+  varying vec2 vUV;
+  varying vec3 vWorldPos;
+  void main(){
+    vec4 wp = uModel * vec4(aPos,1.0);
+    vWorldPos = wp.xyz;
+    vNorm = mat3(uModel) * aNorm;
+    vUV = aUV;
+    gl_Position = uMVP * vec4(aPos,1.0);
+  }
+`;
+
+const FS = `
+  precision mediump float;
+  varying vec3 vNorm;
+  varying vec2 vUV;
+  varying vec3 vWorldPos;
+  uniform sampler2D uTex;
+  uniform bool uHasTex;
+  uniform vec3 uColor;
+  void main(){
+    vec3 n = normalize(vNorm);
+    vec3 light1 = normalize(vec3(1.0,1.5,2.0));
+    vec3 light2 = normalize(vec3(-1.0,0.5,-1.0));
+    float diff1 = max(dot(n, light1), 0.0);
+    float diff2 = max(dot(n, light2), 0.0) * 0.3;
+    float ambient = 0.25;
+    float lighting = ambient + diff1 * 0.7 + diff2;
+    vec3 baseColor = uHasTex ? texture2D(uTex, vUV).rgb : uColor;
+    gl_FragColor = vec4(baseColor * lighting, 1.0);
+  }
+`;
+
+function compileShader(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    console.error('Shader error:', gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog = gl.createProgram();
+gl.attachShader(prog, compileShader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compileShader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+const aPos   = gl.getAttribLocation(prog, 'aPos');
+const aNorm  = gl.getAttribLocation(prog, 'aNorm');
+const aUV    = gl.getAttribLocation(prog, 'aUV');
+const uMVP   = gl.getUniformLocation(prog, 'uMVP');
+const uModel = gl.getUniformLocation(prog, 'uModel');
+const uTex   = gl.getUniformLocation(prog, 'uTex');
+const uHasTex= gl.getUniformLocation(prog, 'uHasTex');
+const uColor = gl.getUniformLocation(prog, 'uColor');
+
+// ─── Matrix helpers ───────────────────────────────────────────────────────────
+const mat4 = {
+  identity: () => new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]),
+  multiply(a, b) {
+    const r = new Float32Array(16);
+    for (let i=0;i<4;i++) for (let j=0;j<4;j++)
+      for (let k=0;k<4;k++) r[i*4+j] += a[i*4+k]*b[k*4+j];
+    return r;
+  },
+  perspective(fov, asp, near, far) {
+    const f = 1/Math.tan(fov/2), r = new Float32Array(16);
+    r[0]=f/asp; r[5]=f;
+    r[10]=(far+near)/(near-far); r[11]=-1;
+    r[14]=2*far*near/(near-far);
+    return r;
+  },
+  translation(x,y,z) {
+    const r=mat4.identity(); r[12]=x; r[13]=y; r[14]=z; return r;
+  },
+  rotationX(a) {
+    const c=Math.cos(a),s=Math.sin(a),r=mat4.identity();
+    r[5]=c; r[6]=s; r[9]=-s; r[10]=c; return r;
+  },
+  rotationY(a) {
+    const c=Math.cos(a),s=Math.sin(a),r=mat4.identity();
+    r[0]=c; r[2]=-s; r[8]=s; r[10]=c; return r;
+  }
+};
+
+// ─── OBJ Parser ──────────────────────────────────────────────────────────────
+function parseOBJ(text) {
+  const positions=[], normals=[], uvs=[], groups=[];
+  let currentMat='default', faces=[];
+  const lines = text.split('\n');
+
+  for (let line of lines) {
+    line = line.trim();
+    if (!line || line[0]==='#') continue;
+    const parts = line.split(/\s+/);
+    if (parts[0]==='v')  positions.push(parts.slice(1).map(Number));
+    else if (parts[0]==='vn') normals.push(parts.slice(1).map(Number));
+    else if (parts[0]==='vt') uvs.push(parts.slice(1).map(Number));
+    else if (parts[0]==='usemtl') {
+      if (faces.length) groups.push({mat:currentMat, faces:[...faces]});
+      currentMat=parts[1]; faces=[];
+    }
+    else if (parts[0]==='f') {
+      const verts = parts.slice(1).map(p => {
+        const idx=p.split('/').map(n=>n?parseInt(n)-1:undefined);
+        return {p:idx[0], t:idx[1], n:idx[2]};
+      });
+      for (let i=1;i<verts.length-1;i++)
+        faces.push([verts[0], verts[i], verts[i+1]]);
+    }
+  }
+  if (faces.length) groups.push({mat:currentMat, faces});
+  return {positions, normals, uvs, groups};
+}
+
+function parseMTL(text) {
+  const mats={}, cur={name:'default',map_Kd:null,Kd:[0.8,0.8,0.8]};
+  mats[cur.name]=cur;
+  let current=cur;
+  for (let line of text.split('\n')) {
+    line=line.trim();
+    if (!line||line[0]==='#') continue;
+    const parts=line.split(/\s+/);
+    if (parts[0]==='newmtl') {
+      current={name:parts[1],map_Kd:null,Kd:[0.8,0.8,0.8]};
+      mats[parts[1]]=current;
+    } else if (parts[0]==='map_Kd') current.map_Kd=parts[parts.length-1].replace(/\\/g,'/').split('/').pop();
+    else if (parts[0]==='Kd') current.Kd=parts.slice(1).map(Number);
+  }
+  return mats;
+}
+
+// ─── Scene state ─────────────────────────────────────────────────────────────
+let meshGroups = [];  // [{buf, count, texId, color}]
+let rotX=0.3, rotY=0.4, zoom=-4, panX=0, panY=0;
+let textures = {};    // filename -> WebGL texture
+let fileMap = {};     // filename -> File
+
+// ─── Build GPU buffers ────────────────────────────────────────────────────────
+function buildBuffers(obj, materials) {
+  meshGroups = [];
+
+  const allPos=obj.positions, allNorm=obj.normals, allUV=obj.uvs;
+
+  // Compute bounding box for auto-center
+  let mn=[Infinity,Infinity,Infinity], mx=[-Infinity,-Infinity,-Infinity];
+  for (const g of obj.groups) for (const tri of g.faces) for (const v of tri) {
+    const p=allPos[v.p]||[0,0,0];
+    for(let i=0;i<3;i++){if(p[i]<mn[i])mn[i]=p[i];if(p[i]>mx[i])mx[i]=p[i];}
+  }
+  const center=mn.map((v,i)=>(v+mx[i])/2);
+  const scale=Math.max(...mx.map((v,i)=>v-mn[i]))||1;
+
+  for (const g of obj.groups) {
+    const data=[], mat=(materials&&materials[g.mat])||{Kd:[0.7,0.7,0.7],map_Kd:null};
+
+    for (const tri of g.faces) for (const v of tri) {
+      const p=allPos[v.p]||[0,0,0];
+      data.push((p[0]-center[0])/scale*2,(p[1]-center[1])/scale*2,(p[2]-center[2])/scale*2);
+      const n=allNorm[v.n]||[0,1,0];
+      data.push(...n);
+      const uv=allUV[v.t]||[0,0];
+      data.push(uv[0],1-uv[1]);
+    }
+
+    if (!data.length) continue;
+    const buf=gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+    gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);
+
+    let texId=null;
+    if (mat.map_Kd && textures[mat.map_Kd]) texId=textures[mat.map_Kd];
+
+    meshGroups.push({buf, count:data.length/8, texId, color:mat.Kd, matName:g.mat, texName:mat.map_Kd});
+  }
+}
+
+function makeTexture(img) {
+  const t=gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
+  gl.generateMipmap(gl.TEXTURE_2D);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
+  gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.REPEAT);
+  return t;
+}
+
+// ─── File loading pipeline ────────────────────────────────────────────────────
+let objText=null, mtlText=null, parsedMTL=null;
+
+async function loadFiles(files) {
+  fileMap={};
+  for (const f of files) fileMap[f.name]=f;
+
+  // Load images first
+  for (const [name,file] of Object.entries(fileMap)) {
+    if (/\.(png|jpe?g|webp)$/i.test(name)) {
+      await new Promise(res=>{
+        const img=new Image();
+        img.onload=()=>{ textures[name]=makeTexture(img); res(); };
+        img.src=URL.createObjectURL(file);
+      });
+    }
+  }
+
+  // Load MTL
+  for (const [name,file] of Object.entries(fileMap)) {
+    if (/\.mtl$/i.test(name)) {
+      mtlText=await file.text();
+      parsedMTL=parseMTL(mtlText);
+    }
+  }
+
+  // Load OBJ
+  for (const [name,file] of Object.entries(fileMap)) {
+    if (/\.obj$/i.test(name)) {
+      objText=await file.text();
+      const obj=parseOBJ(objText);
+      buildBuffers(obj, parsedMTL);
+      document.getElementById('drop-overlay').className='hidden';
+      document.getElementById('hud').className='visible';
+      const mn=document.getElementById('model-name');
+      mn.textContent=name;
+      mn.className='visible';
+    }
+  }
+}
+
+// ─── Drag & Drop ──────────────────────────────────────────────────────────────
+document.addEventListener('dragover', e=>{ e.preventDefault(); document.body.classList.add('dragover'); });
+document.addEventListener('dragleave', ()=>document.body.classList.remove('dragover'));
+document.addEventListener('drop', e=>{
+  e.preventDefault();
+  document.body.classList.remove('dragover');
+  loadFiles([...e.dataTransfer.files]);
+});
+document.getElementById('file-input').addEventListener('change', e=>loadFiles([...e.target.files]));
+
+// ─── Mouse / Touch controls ───────────────────────────────────────────────────
+let mouse={down:false,right:false,x:0,y:0};
+
+canvas.addEventListener('mousedown', e=>{
+  mouse.down=true;
+  mouse.right=e.button===2;
+  mouse.x=e.clientX; mouse.y=e.clientY;
+});
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+window.addEventListener('mouseup', ()=>mouse.down=false);
+window.addEventListener('mousemove', e=>{
+  if (!mouse.down) return;
+  const dx=e.clientX-mouse.x, dy=e.clientY-mouse.y;
+  mouse.x=e.clientX; mouse.y=e.clientY;
+  if (mouse.right) { panX+=dx*0.005; panY-=dy*0.005; }
+  else { rotY+=dx*0.005; rotX+=dy*0.005; }
+});
+canvas.addEventListener('wheel', e=>{ zoom+=e.deltaY*0.002; zoom=Math.max(-20,Math.min(-0.5,zoom)); });
+
+// Touch
+let touches=[];
+canvas.addEventListener('touchstart', e=>{ touches=[...e.touches]; });
+canvas.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  if (e.touches.length===1 && touches.length===1) {
+    const dx=e.touches[0].clientX-touches[0].clientX;
+    const dy=e.touches[0].clientY-touches[0].clientY;
+    rotY+=dx*0.005; rotX+=dy*0.005;
+  } else if (e.touches.length===2 && touches.length===2) {
+    const prevDist=Math.hypot(touches[0].clientX-touches[1].clientX,touches[0].clientY-touches[1].clientY);
+    const nowDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    zoom-=(nowDist-prevDist)*0.01;
+    zoom=Math.max(-20,Math.min(-0.5,zoom));
+  }
+  touches=[...e.touches];
+},{passive:false});
+
+// ─── Render loop ──────────────────────────────────────────────────────────────
+gl.enable(gl.DEPTH_TEST);
+gl.clearColor(1,1,1,1);
+
+function render() {
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+
+  if (!meshGroups.length) { requestAnimationFrame(render); return; }
+
+  const asp=canvas.width/canvas.height;
+  const proj=mat4.perspective(Math.PI/4, asp, 0.01, 100);
+  const view=mat4.translation(panX, panY, zoom);
+  const modelM=mat4.multiply(mat4.rotationX(rotX), mat4.rotationY(rotY));
+  const mv=mat4.multiply(view, modelM);
+  const mvp=mat4.multiply(proj, mv);
+
+  gl.uniformMatrix4fv(uMVP, false, mvp);
+  gl.uniformMatrix4fv(uModel, false, modelM);
+
+  for (const g of meshGroups) {
+    gl.bindBuffer(gl.ARRAY_BUFFER, g.buf);
+    const stride=8*4;
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, stride, 0);
+    gl.enableVertexAttribArray(aNorm);
+    gl.vertexAttribPointer(aNorm, 3, gl.FLOAT, false, stride, 12);
+    gl.enableVertexAttribArray(aUV);
+    gl.vertexAttribPointer(aUV, 2, gl.FLOAT, false, stride, 24);
+
+    if (g.texId) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, g.texId);
+      gl.uniform1i(uTex, 0);
+      gl.uniform1i(uHasTex, 1);
+    } else {
+      gl.uniform1i(uHasTex, 0);
+      gl.uniform3fv(uColor, g.color||[0.7,0.7,0.7]);
+    }
+
+    gl.drawArrays(gl.TRIANGLES, 0, g.count);
+  }
+
+  requestAnimationFrame(render);
+}
+render();
+</script>
+</body>
+</html>
