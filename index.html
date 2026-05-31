@@ -345,7 +345,7 @@ document.addEventListener('drop',e=>{e.preventDefault();document.body.classList.
 document.getElementById('fi').addEventListener('change',e=>handleFiles([...e.target.files]));
 
 // ── Camera ───────────────────────────────────────────────────────────────────
-let rX=.25,rY=.5,zoom=-3.5,pX=0,pY=0;
+let rX=0,rY=0,zoom=3.5,pX=0,pY=0;
 let md=false,mr=false,mx_=0,my_=0;
 canvas.addEventListener('mousedown',e=>{md=true;mr=e.button===2;mx_=e.clientX;my_=e.clientY;});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
@@ -355,7 +355,8 @@ window.addEventListener('mousemove',e=>{
   const dx=e.clientX-mx_,dy=e.clientY-my_;mx_=e.clientX;my_=e.clientY;
   if(mr){pX+=dx*.004;pY-=dy*.004;}else{rY+=dx*.005;rX+=dy*.005;}
 });
-canvas.addEventListener('wheel',e=>{zoom+=e.deltaY*.003;zoom=Math.max(-20,Math.min(-.3,zoom));},{passive:true});
+// 스크롤 위 = 확대, 아래 = 축소
+canvas.addEventListener('wheel',e=>{zoom-=e.deltaY*.005;zoom=Math.max(0.3,Math.min(50,zoom));},{passive:true});
 
 // touch
 let tc=[];
@@ -383,8 +384,8 @@ function draw(){
   if(!meshes.length){requestAnimationFrame(draw);return;}
 
   const asp=canvas.width/canvas.height;
-  const proj=M.persp(Math.PI/4,asp,.01,100);
-  const view=M.tr(pX,pY,zoom);
+  const proj=M.persp(Math.PI/4,asp,.01,1000);
+  const view=M.tr(pX,pY,-zoom);  // zoom 양수 = 카메라가 뒤로
   const model=M.mul(M.rx(rX),M.ry(rY));
   const mv=M.mul(view,model);
   const mvp=M.mul(proj,mv);
