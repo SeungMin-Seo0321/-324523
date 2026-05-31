@@ -6,297 +6,262 @@
   <title>3D Model Viewer</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #ffffff; width: 100vw; height: 100vh; overflow: hidden; font-family: 'Courier New', monospace; }
-    canvas { display: block; cursor: grab; width: 100vw; height: 100vh; }
-    canvas:active { cursor: grabbing; }
+    * { margin:0;padding:0;box-sizing:border-box; }
+    body { background:#fff; overflow:hidden; font-family:'Courier New',monospace; }
+    canvas { display:block; cursor:grab; }
+    canvas:active { cursor:grabbing; }
 
-    #drop-overlay {
-      position: fixed; inset: 0;
-      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
-      z-index: 10; transition: opacity 0.4s;
+    #ui {
+      position:fixed;inset:0;display:flex;flex-direction:column;
+      align-items:center;justify-content:center;gap:14px;
+      transition:opacity .4s;pointer-events:none;
     }
-    #drop-overlay.hidden { opacity: 0; pointer-events: none; }
-    .drop-icon { font-size: 64px; opacity: 0.2; animation: float 3s ease-in-out infinite; }
-    .drop-label { font-size: 13px; letter-spacing: 0.15em; color: #aaa; text-transform: uppercase; }
-    .drop-sub { font-size: 11px; letter-spacing: 0.1em; color: #ccc; text-transform: uppercase; }
-    #file-btn {
-      margin-top: 8px; padding: 10px 28px; background: transparent;
-      border: 1px solid #ccc; color: #999; font-family: 'Courier New', monospace;
-      font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; transition: all 0.2s;
-    }
-    #file-btn:hover { border-color: #888; color: #555; }
-    @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
-
-    #hud {
-      position: fixed; bottom: 28px; left: 50%; transform: translateX(-50%);
-      display: flex; gap: 32px; font-size: 10px; letter-spacing: 0.15em; color: #bbb;
-      text-transform: uppercase; pointer-events: none; opacity: 0; transition: opacity 0.5s;
-    }
-    #hud.visible { opacity: 1; }
-    #model-name {
-      position: fixed; top: 28px; left: 50%; transform: translateX(-50%);
-      font-size: 11px; letter-spacing: 0.2em; color: #ccc; text-transform: uppercase;
-      pointer-events: none; opacity: 0; transition: opacity 0.5s; white-space: nowrap;
-    }
-    #model-name.visible { opacity: 1; }
-    #status {
-      position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%);
-      font-size: 12px; letter-spacing: 0.15em; color: #aaa; text-transform: uppercase;
-      pointer-events: none; opacity: 0; transition: opacity 0.3s;
-    }
-    #status.visible { opacity: 1; }
-    body.dragover::after {
-      content: ''; position: fixed; inset: 0;
-      border: 2px dashed #ccc; pointer-events: none; z-index: 999;
-    }
-    #file-input { display: none; }
+    #ui.hidden{opacity:0;pointer-events:none;}
+    .icon{font-size:52px;opacity:.18;animation:fl 3s ease-in-out infinite;}
+    @keyframes fl{0%,100%{transform:translateY(0)}50%{transform:translateY(-8px)}}
+    .lbl{font-size:12px;letter-spacing:.18em;color:#aaa;text-transform:uppercase;}
+    .sub{font-size:10px;letter-spacing:.12em;color:#ccc;text-transform:uppercase;}
+    #btn{pointer-events:all;padding:9px 26px;background:transparent;border:1px solid #ccc;
+      color:#999;font-family:'Courier New',monospace;font-size:10px;letter-spacing:.14em;
+      text-transform:uppercase;cursor:pointer;transition:all .2s;}
+    #btn:hover{border-color:#888;color:#555;}
+    #hud{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);
+      display:flex;gap:28px;font-size:9px;letter-spacing:.14em;color:#bbb;
+      text-transform:uppercase;pointer-events:none;opacity:0;transition:opacity .5s;}
+    #hud.on{opacity:1;}
+    #info{position:fixed;top:20px;left:50%;transform:translateX(-50%);
+      font-size:10px;letter-spacing:.18em;color:#ccc;text-transform:uppercase;
+      pointer-events:none;opacity:0;transition:opacity .5s;white-space:nowrap;}
+    #info.on{opacity:1;}
+    #log{position:fixed;bottom:60px;left:16px;font-size:10px;color:#f66;
+      font-family:'Courier New',monospace;pointer-events:none;max-width:60vw;}
+    body.dg::after{content:'';position:fixed;inset:0;border:2px dashed #ccc;pointer-events:none;z-index:99;}
+    #fi{display:none;}
   </style>
 </head>
 <body>
-
-<canvas id="gl-canvas"></canvas>
-
-<div id="drop-overlay">
-  <div class="drop-icon">⬡</div>
-  <div class="drop-label">Drop OBJ or ZIP file here</div>
-  <div class="drop-sub">ZIP 안에 OBJ + MTL + 텍스쳐 같이 넣어도 OK</div>
-  <button id="file-btn" onclick="document.getElementById('file-input').click()">파일 선택</button>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div class="icon">⬡</div>
+  <div class="lbl">OBJ 또는 ZIP 파일을 드롭하세요</div>
+  <div class="sub">MTL + 텍스쳐도 같이 드롭 or ZIP으로 묶어서</div>
+  <button id="btn" onclick="document.getElementById('fi').click()">파일 선택</button>
 </div>
-
-<input type="file" id="file-input" multiple accept=".obj,.mtl,.png,.jpg,.jpeg,.webp,.zip" />
-<div id="hud">
-  <span>드래그 → 회전</span>
-  <span>스크롤 → 줌</span>
-  <span>우클릭 드래그 → 이동</span>
-</div>
-<div id="model-name"></div>
-<div id="status"></div>
+<input type="file" id="fi" multiple accept=".obj,.mtl,.png,.jpg,.jpeg,.webp,.zip"/>
+<div id="hud"><span>드래그→회전</span><span>스크롤→줌</span><span>우클릭→이동</span></div>
+<div id="info"></div>
+<div id="log"></div>
 
 <script>
-// ── WebGL init ────────────────────────────────────────────────────────────────
-const canvas = document.getElementById('gl-canvas');
-const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-if (!gl) { alert('WebGL을 지원하지 않는 브라우저입니다.'); }
+const canvas = document.getElementById('c');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+const gl = canvas.getContext('webgl', {antialias:true});
+window.addEventListener('resize', ()=>{
+  canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+  gl.viewport(0,0,canvas.width,canvas.height);
+});
+gl.viewport(0,0,canvas.width,canvas.height);
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  gl.viewport(0, 0, canvas.width, canvas.height);
-}
-window.addEventListener('resize', resize);
-resize();
+function log(msg){ document.getElementById('log').textContent=msg; console.log(msg); }
 
-// ── Shaders ───────────────────────────────────────────────────────────────────
-const VS = `
-attribute vec3 aPos;
-attribute vec3 aNorm;
-attribute vec2 aUV;
-uniform mat4 uMVP;
-uniform mat4 uNormMat;
-varying vec3 vNorm;
-varying vec2 vUV;
+// ── Shaders ──────────────────────────────────────────────────────────────────
+const VS=`
+attribute vec3 a_pos;
+attribute vec3 a_nrm;
+attribute vec2 a_uv;
+uniform mat4 u_mvp;
+uniform mat3 u_nm;
+varying vec3 v_nrm;
+varying vec2 v_uv;
 void main(){
-  vNorm = mat3(uNormMat) * aNorm;
-  vUV = aUV;
-  gl_Position = uMVP * vec4(aPos, 1.0);
+  v_nrm = u_nm * a_nrm;
+  v_uv  = a_uv;
+  gl_Position = u_mvp * vec4(a_pos,1.0);
 }`;
-
-const FS = `
+const FS=`
 precision mediump float;
-varying vec3 vNorm;
-varying vec2 vUV;
-uniform sampler2D uTex;
-uniform bool uHasTex;
-uniform vec3 uColor;
+varying vec3 v_nrm;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+uniform int u_mode; // 0=color,1=tex
+uniform vec3 u_color;
 void main(){
-  vec3 n = normalize(vNorm);
-  vec3 l1 = normalize(vec3(1.0, 2.0, 2.0));
-  vec3 l2 = normalize(vec3(-1.0, -0.5, -1.0));
-  float d1 = max(dot(n, l1), 0.0);
-  float d2 = max(dot(n, l2), 0.0) * 0.25;
-  float lit = 0.3 + d1 * 0.65 + d2;
-  vec3 base = uHasTex ? texture2D(uTex, vUV).rgb : uColor;
-  gl_FragColor = vec4(base * lit, 1.0);
+  vec3 n=normalize(v_nrm);
+  vec3 L1=normalize(vec3(1.0,2.0,2.0));
+  vec3 L2=normalize(vec3(-1.5,1.0,-1.0));
+  float d=max(dot(n,L1),0.0)*0.65 + max(dot(n,L2),0.0)*0.2 + 0.3;
+  vec3 base = u_mode==1 ? texture2D(u_tex,v_uv).rgb : u_color;
+  gl_FragColor=vec4(base*d,1.0);
 }`;
 
-function mkShader(type, src) {
-  const s = gl.createShader(type);
-  gl.shaderSource(s, src);
-  gl.compileShader(s);
-  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
-    console.error(gl.getShaderInfoLog(s));
-  return s;
+function compSh(t,s){
+  const sh=gl.createShader(t);
+  gl.shaderSource(sh,s); gl.compileShader(sh);
+  if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS)){
+    console.error(gl.getShaderInfoLog(sh));
+  }
+  return sh;
 }
-const prog = gl.createProgram();
-gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, VS));
-gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, FS));
+const prog=gl.createProgram();
+gl.attachShader(prog,compSh(gl.VERTEX_SHADER,VS));
+gl.attachShader(prog,compSh(gl.FRAGMENT_SHADER,FS));
 gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(prog));
 gl.useProgram(prog);
 
-const loc = {
-  pos:   gl.getAttribLocation(prog,'aPos'),
-  norm:  gl.getAttribLocation(prog,'aNorm'),
-  uv:    gl.getAttribLocation(prog,'aUV'),
-  mvp:   gl.getUniformLocation(prog,'uMVP'),
-  nmat:  gl.getUniformLocation(prog,'uNormMat'),
-  tex:   gl.getUniformLocation(prog,'uTex'),
-  hasTex:gl.getUniformLocation(prog,'uHasTex'),
-  color: gl.getUniformLocation(prog,'uColor'),
+const L={
+  pos:  gl.getAttribLocation(prog,'a_pos'),
+  nrm:  gl.getAttribLocation(prog,'a_nrm'),
+  uv:   gl.getAttribLocation(prog,'a_uv'),
+  mvp:  gl.getUniformLocation(prog,'u_mvp'),
+  nm:   gl.getUniformLocation(prog,'u_nm'),
+  tex:  gl.getUniformLocation(prog,'u_tex'),
+  mode: gl.getUniformLocation(prog,'u_mode'),
+  col:  gl.getUniformLocation(prog,'u_color'),
 };
 
-// ── Math ──────────────────────────────────────────────────────────────────────
-function ident(){ return new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]); }
-function mul(a,b){
-  const r=new Float32Array(16);
-  for(let i=0;i<4;i++) for(let j=0;j<4;j++) for(let k=0;k<4;k++) r[i*4+j]+=a[i*4+k]*b[k*4+j];
-  return r;
-}
-function persp(fov,asp,n,f){
-  const t=1/Math.tan(fov/2), r=new Float32Array(16);
-  r[0]=t/asp; r[5]=t; r[10]=(f+n)/(n-f); r[11]=-1; r[14]=2*f*n/(n-f); return r;
-}
-function trans(x,y,z){ const r=ident(); r[12]=x;r[13]=y;r[14]=z; return r; }
-function rotX(a){ const c=Math.cos(a),s=Math.sin(a),r=ident(); r[5]=c;r[6]=s;r[9]=-s;r[10]=c; return r; }
-function rotY(a){ const c=Math.cos(a),s=Math.sin(a),r=ident(); r[0]=c;r[2]=-s;r[8]=s;r[10]=c; return r; }
+// ── Math ─────────────────────────────────────────────────────────────────────
+const M={
+  id:()=>new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]),
+  mul(a,b){
+    const r=new Float32Array(16);
+    for(let i=0;i<4;i++)for(let j=0;j<4;j++)for(let k=0;k<4;k++)r[i*4+j]+=a[i*4+k]*b[k*4+j];
+    return r;
+  },
+  persp(fov,asp,n,f){
+    const t=1/Math.tan(fov/2),r=new Float32Array(16);
+    r[0]=t/asp;r[5]=t;r[10]=(f+n)/(n-f);r[11]=-1;r[14]=2*f*n/(n-f);return r;
+  },
+  tr(x,y,z){const r=M.id();r[12]=x;r[13]=y;r[14]=z;return r;},
+  rx(a){const c=Math.cos(a),s=Math.sin(a),r=M.id();r[5]=c;r[6]=s;r[9]=-s;r[10]=c;return r;},
+  ry(a){const c=Math.cos(a),s=Math.sin(a),r=M.id();r[0]=c;r[2]=-s;r[8]=s;r[10]=c;return r;},
+  nm(m){// upper-left 3x3 as Float32Array (column-major)
+    return new Float32Array([m[0],m[1],m[2],m[4],m[5],m[6],m[8],m[9],m[10]]);
+  }
+};
 
 // ── OBJ Parser ────────────────────────────────────────────────────────────────
-function parseOBJ(text) {
-  const vp=[], vn=[], vt=[], groups=[];
-  let mat='default', tris=[];
+function parseOBJ(src){
+  const VP=[],VN=[],VT=[];
+  const groups=[];
+  let curMat='default';
+  let curFaces=[];
 
-  function flush(){ if(tris.length){ groups.push({mat, tris:[...tris]}); tris=[]; } }
+  function flush(){
+    if(curFaces.length){ groups.push({mat:curMat,faces:[...curFaces]}); curFaces=[]; }
+  }
 
-  for (let raw of text.split('\n')) {
-    const line = raw.trim();
-    if (!line || line[0]==='#') continue;
-    const tok = line.split(/\s+/);
-    const cmd = tok[0];
-
-    if (cmd==='v')       vp.push(tok.slice(1).map(Number));
-    else if (cmd==='vn') vn.push(tok.slice(1).map(Number));
-    else if (cmd==='vt') vt.push([parseFloat(tok[1])||0, parseFloat(tok[2])||0]);
-    else if (cmd==='usemtl') { flush(); mat=tok[1]; }
-    else if (cmd==='g'||cmd==='o') { flush(); }
-    else if (cmd==='f') {
-      const verts = tok.slice(1).map(s => {
-        const p = s.split('/');
-        const pi = parseInt(p[0]); const ti = parseInt(p[1]); const ni = parseInt(p[2]);
-        return {
-          p: (pi>0 ? pi-1 : vp.length+pi),
-          t: p[1]!==undefined&&p[1]!=='' ? (ti>0?ti-1:vt.length+ti) : -1,
-          n: p[2]!==undefined&&p[2]!=='' ? (ni>0?ni-1:vn.length+ni) : -1
-        };
-      });
-      // fan triangulation
-      for (let i=1;i<verts.length-1;i++)
-        tris.push([verts[0], verts[i], verts[i+1]]);
+  for(let raw of src.split(/\r?\n/)){
+    const line=raw.trim();
+    if(!line||line[0]==='#') continue;
+    const t=line.split(/\s+/);
+    switch(t[0]){
+      case 'v':  VP.push([+t[1],+t[2],+t[3]]); break;
+      case 'vn': VN.push([+t[1],+t[2],+t[3]]); break;
+      case 'vt': VT.push([+t[1]||0,+t[2]||0]); break;
+      case 'usemtl': flush(); curMat=t[1]||'default'; break;
+      case 'g': case 'o': flush(); break;
+      case 'f':{
+        const verts=t.slice(1).map(s=>{
+          const p=s.split('/');
+          const pi=parseInt(p[0]); const ti=p[1]?parseInt(p[1]):0; const ni=p[2]?parseInt(p[2]):0;
+          return {
+            vi: pi>0?pi-1:VP.length+pi,
+            ti: ti>0?ti-1:ti<0?VT.length+ti:-1,
+            ni: ni>0?ni-1:ni<0?VN.length+ni:-1
+          };
+        });
+        // fan triangulate
+        for(let i=1;i<verts.length-1;i++)
+          curFaces.push([verts[0],verts[i],verts[i+1]]);
+        break;
+      }
     }
   }
   flush();
-  return {vp, vn, vt, groups};
+  return{VP,VN,VT,groups};
 }
 
-function parseMTL(text) {
-  const mats={};
-  let cur=null;
-  for (let raw of text.split('\n')) {
-    const line=raw.trim();
-    if(!line||line[0]==='#') continue;
-    const tok=line.split(/\s+/);
-    if(tok[0]==='newmtl'){ cur={name:tok[1],Kd:[0.8,0.8,0.8],map_Kd:null}; mats[tok[1]]=cur; }
+function parseMTL(src){
+  const mats={};let cur=null;
+  for(let raw of src.split(/\r?\n/)){
+    const t=raw.trim().split(/\s+/);
+    if(t[0]==='newmtl'){cur={Kd:[.8,.8,.8],map_Kd:null};mats[t[1]]=cur;}
     else if(cur){
-      if(tok[0]==='Kd') cur.Kd=tok.slice(1).map(Number);
-      else if(tok[0]==='map_Kd'){
-        // grab just the filename (last token, strip path separators)
-        cur.map_Kd = tok[tok.length-1].replace(/\\/g,'/').split('/').pop();
-      }
+      if(t[0]==='Kd')cur.Kd=[+t[1],+t[2],+t[3]];
+      if(t[0]==='map_Kd')cur.map_Kd=t[t.length-1].replace(/\\/g,'/').split('/').pop();
     }
   }
   return mats;
 }
 
-// ── Compute normals if missing ────────────────────────────────────────────────
-function computeNormals(positions) {
-  // returns array indexed same as positions (flat)
-  const norms = new Array(positions.length/3).fill(null).map(()=>[0,0,0]);
-  for(let i=0;i<positions.length;i+=9){
-    const ax=positions[i],ay=positions[i+1],az=positions[i+2];
-    const bx=positions[i+3],by=positions[i+4],bz=positions[i+5];
-    const cx=positions[i+6],cy=positions[i+7],cz=positions[i+8];
-    const ux=bx-ax,uy=by-ay,uz=bz-az;
-    const vx=cx-ax,vy=cy-ay,vz=cz-az;
-    const nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-    const vi=i/3;
-    for(let k=0;k<3;k++){ norms[vi+k][0]+=nx; norms[vi+k][1]+=ny; norms[vi+k][2]+=nz; }
+// ── Cross product & normalize ─────────────────────────────────────────────────
+function cross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+function norm3(v){const l=Math.hypot(...v)||1;return v.map(x=>x/l);}
+function sub3(a,b){return[a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
+
+// ── Build GPU mesh ────────────────────────────────────────────────────────────
+let meshes=[], texCache={};
+
+function buildMesh(obj,mtls){
+  meshes=[];
+  const {VP,VN,VT,groups}=obj;
+
+  // auto-center & scale
+  let mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];
+  for(const g of groups)for(const tri of g.faces)for(const v of tri){
+    const p=VP[v.vi];if(!p)continue;
+    for(let i=0;i<3;i++){mn[i]=Math.min(mn[i],p[i]);mx[i]=Math.max(mx[i],p[i]);}
   }
-  return norms;
-}
+  const cx=(mn[0]+mx[0])/2,cy=(mn[1]+mx[1])/2,cz=(mn[2]+mx[2])/2;
+  const span=Math.max(mx[0]-mn[0],mx[1]-mn[1],mx[2]-mn[2])||1;
+  const sc=1.8/span;
 
-// ── Build GPU buffers ─────────────────────────────────────────────────────────
-let meshGroups=[], texMap={};
+  log(`verts:${VP.length} normals:${VN.length} uvs:${VT.length} groups:${groups.length} span:${span.toFixed(3)}`);
 
-function buildMesh(obj, mtls) {
-  meshGroups=[];
-  const {vp, vn, vt, groups} = obj;
-
-  // bounding box
-  let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
-  for(const {tris} of groups) for(const tri of tris) for(const v of tri){
-    const p=vp[v.p]; if(!p) continue;
-    for(let i=0;i<3;i++){ if(p[i]<mn[i])mn[i]=p[i]; if(p[i]>mx[i])mx[i]=p[i]; }
-  }
-  const cx=(mn[0]+mx[0])/2, cy=(mn[1]+mx[1])/2, cz=(mn[2]+mx[2])/2;
-  const span=Math.max(mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2])||1;
-  const sc=2/span;
-
-  for(const {mat, tris} of groups){
-    if(!tris.length) continue;
-    const m = (mtls&&mtls[mat]) || {Kd:[0.75,0.75,0.75],map_Kd:null};
-
-    const posArr=[], normArr=[], uvArr=[];
-    for(const tri of tris) for(const v of tri){
-      const p=vp[v.p]||[0,0,0];
-      posArr.push((p[0]-cx)*sc, (p[1]-cy)*sc, (p[2]-cz)*sc);
-      const n=v.n>=0&&vn[v.n] ? vn[v.n] : null;
-      normArr.push(n?n[0]:0, n?n[1]:0, n?n[2]:1);
-      const u=v.t>=0&&vt[v.t] ? vt[v.t] : [0,0];
-      uvArr.push(u[0], 1-u[1]);
-    }
-
-    // if no normals in OBJ, compute flat normals
-    const hasObjNormals = tris.some(tri=>tri.some(v=>v.n>=0));
-    let finalNorms = normArr;
-    if(!hasObjNormals){
-      const flatN = computeNormals(posArr);
-      finalNorms = [];
-      for(const n of flatN) finalNorms.push(...n);
-    }
-
-    // interleave pos+norm+uv
+  for(const g of groups){
+    if(!g.faces.length)continue;
+    const m=(mtls&&mtls[g.mat])||{Kd:[.7,.7,.7],map_Kd:null};
     const data=[];
-    const cnt=posArr.length/3;
-    for(let i=0;i<cnt;i++){
-      data.push(posArr[i*3],posArr[i*3+1],posArr[i*3+2]);
-      // normalize normals
-      let nx=finalNorms[i*3],ny=finalNorms[i*3+1],nz=finalNorms[i*3+2];
-      const nl=Math.sqrt(nx*nx+ny*ny+nz*nz)||1;
-      data.push(nx/nl,ny/nl,nz/nl);
-      data.push(uvArr[i*2],uvArr[i*2+1]);
+
+    for(const tri of g.faces){
+      // get positions
+      const pts=tri.map(v=>{
+        const p=VP[v.vi]||[0,0,0];
+        return[(p[0]-cx)*sc,(p[1]-cy)*sc,(p[2]-cz)*sc];
+      });
+
+      // face normal fallback
+      const faceN=norm3(cross(sub3(pts[1],pts[0]),sub3(pts[2],pts[0])));
+
+      for(let i=0;i<3;i++){
+        const v=tri[i];
+        data.push(...pts[i]);
+        // normal
+        const n=v.ni>=0&&VN[v.ni] ? norm3(VN[v.ni]) : faceN;
+        data.push(...n);
+        // uv
+        const uv=v.ti>=0&&VT[v.ti] ? VT[v.ti] : [0,0];
+        data.push(uv[0],1-uv[1]);
+      }
     }
 
+    if(!data.length)continue;
     const buf=gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER,buf);
     gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);
 
-    const texId = m.map_Kd && texMap[m.map_Kd] ? texMap[m.map_Kd] : null;
-    meshGroups.push({buf, count:cnt, texId, color:m.Kd||[0.75,0.75,0.75]});
+    const texId=m.map_Kd&&texCache[m.map_Kd]?texCache[m.map_Kd]:null;
+    meshes.push({buf,count:data.length/8,texId,color:m.Kd||[.7,.7,.7]});
   }
+  log(`meshes built: ${meshes.length}`);
 }
 
 function mkTex(img){
   const t=gl.createTexture();
   gl.bindTexture(gl.TEXTURE_2D,t);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL,true);
   gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img);
   gl.generateMipmap(gl.TEXTURE_2D);
   gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.REPEAT);
@@ -304,150 +269,124 @@ function mkTex(img){
   return t;
 }
 
-// ── File pipeline ─────────────────────────────────────────────────────────────
-function setStatus(msg){ const el=document.getElementById('status'); el.textContent=msg; el.className=msg?'visible':''; }
+// ── Load files ────────────────────────────────────────────────────────────────
+async function handleFiles(files){
+  const fm={};
+  for(const f of files){
+    if(/\.zip$/i.test(f.name)){
+      log('unzipping...');
+      const z=await JSZip.loadAsync(f);
+      for(const [path,entry] of Object.entries(z.files)){
+        if(entry.dir)continue;
+        const name=path.replace(/\\/g,'/').split('/').pop();
+        fm[name]=await entry.async('blob');
+      }
+    } else { fm[f.name]=f; }
+  }
 
-async function processFiles(fileMap) {
-  setStatus('loading...');
-
-  // 1. load images first
-  for(const [name,blob] of Object.entries(fileMap)){
+  // images
+  for(const [name,blob] of Object.entries(fm)){
     if(/\.(png|jpe?g|webp|bmp)$/i.test(name)){
       await new Promise(res=>{
         const img=new Image();
         const url=URL.createObjectURL(blob);
-        img.onload=()=>{ texMap[name]=mkTex(img); URL.revokeObjectURL(url); res(); };
-        img.onerror=res;
-        img.src=url;
+        img.onload=()=>{ texCache[name]=mkTex(img); URL.revokeObjectURL(url); res(); };
+        img.onerror=res; img.src=url;
       });
     }
   }
 
-  // 2. parse MTL
+  // MTL
   let mtls=null;
-  for(const [name,blob] of Object.entries(fileMap)){
-    if(/\.mtl$/i.test(name)){
-      const txt=await blob.text();
-      mtls=parseMTL(txt);
-    }
+  for(const [name,blob] of Object.entries(fm)){
+    if(/\.mtl$/i.test(name)){ mtls=parseMTL(await blob.text()); }
   }
 
-  // 3. parse OBJ
-  for(const [name,blob] of Object.entries(fileMap)){
+  // OBJ
+  for(const [name,blob] of Object.entries(fm)){
     if(/\.obj$/i.test(name)){
+      log(`parsing ${name}...`);
       const txt=await blob.text();
       const obj=parseOBJ(txt);
-      buildMesh(obj, mtls);
-      document.getElementById('drop-overlay').className='hidden';
-      document.getElementById('hud').className='visible';
-      const mn=document.getElementById('model-name');
-      mn.textContent=name; mn.className='visible';
-      setStatus('');
+      buildMesh(obj,mtls);
+      document.getElementById('ui').className='hidden';
+      document.getElementById('hud').className='on';
+      const el=document.getElementById('info'); el.textContent=name; el.className='on';
       return;
     }
   }
-  setStatus('OBJ 파일을 찾을 수 없어요');
+  log('OBJ 파일을 찾을 수 없습니다');
 }
 
-async function handleFiles(files) {
-  const fileMap={};
+document.addEventListener('dragover',e=>{e.preventDefault();document.body.classList.add('dg');});
+document.addEventListener('dragleave',()=>document.body.classList.remove('dg'));
+document.addEventListener('drop',e=>{e.preventDefault();document.body.classList.remove('dg');handleFiles([...e.dataTransfer.files]);});
+document.getElementById('fi').addEventListener('change',e=>handleFiles([...e.target.files]));
 
-  for(const file of files){
-    if(/\.zip$/i.test(file.name)){
-      setStatus('ZIP 압축 해제 중...');
-      const zip=await JSZip.loadAsync(file);
-      for(const [path, entry] of Object.entries(zip.files)){
-        if(entry.dir) continue;
-        const fname=path.replace(/\\/g,'/').split('/').pop();
-        if(!fname) continue;
-        const blob=await entry.async('blob');
-        fileMap[fname]=blob;
-      }
-    } else {
-      fileMap[file.name]=file;
-    }
-  }
-
-  await processFiles(fileMap);
-}
-
-// ── Drag & drop ───────────────────────────────────────────────────────────────
-document.addEventListener('dragover', e=>{ e.preventDefault(); document.body.classList.add('dragover'); });
-document.addEventListener('dragleave', ()=>document.body.classList.remove('dragover'));
-document.addEventListener('drop', e=>{ e.preventDefault(); document.body.classList.remove('dragover'); handleFiles([...e.dataTransfer.files]); });
-document.getElementById('file-input').addEventListener('change', e=>handleFiles([...e.target.files]));
-
-// ── Mouse / Touch ─────────────────────────────────────────────────────────────
-let rotX_=0.3, rotY_=0.5, zoom=-4, panX=0, panY=0;
-let mouse={down:false,right:false,x:0,y:0};
-
-canvas.addEventListener('mousedown',e=>{ mouse.down=true; mouse.right=e.button===2; mouse.x=e.clientX; mouse.y=e.clientY; });
+// ── Camera ───────────────────────────────────────────────────────────────────
+let rX=.25,rY=.5,zoom=-3.5,pX=0,pY=0;
+let md=false,mr=false,mx_=0,my_=0;
+canvas.addEventListener('mousedown',e=>{md=true;mr=e.button===2;mx_=e.clientX;my_=e.clientY;});
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
-window.addEventListener('mouseup',()=>mouse.down=false);
+window.addEventListener('mouseup',()=>md=false);
 window.addEventListener('mousemove',e=>{
-  if(!mouse.down) return;
-  const dx=e.clientX-mouse.x, dy=e.clientY-mouse.y;
-  mouse.x=e.clientX; mouse.y=e.clientY;
-  if(mouse.right){ panX+=dx*0.004; panY-=dy*0.004; }
-  else { rotY_+=dx*0.005; rotX_+=dy*0.005; }
+  if(!md)return;
+  const dx=e.clientX-mx_,dy=e.clientY-my_;mx_=e.clientX;my_=e.clientY;
+  if(mr){pX+=dx*.004;pY-=dy*.004;}else{rY+=dx*.005;rX+=dy*.005;}
 });
-canvas.addEventListener('wheel',e=>{ zoom+=e.deltaY*0.003; zoom=Math.max(-20,Math.min(-0.5,zoom)); },{passive:true});
+canvas.addEventListener('wheel',e=>{zoom+=e.deltaY*.003;zoom=Math.max(-20,Math.min(-.3,zoom));},{passive:true});
 
-let touches=[];
-canvas.addEventListener('touchstart',e=>{ touches=[...e.touches]; },{passive:true});
+// touch
+let tc=[];
+canvas.addEventListener('touchstart',e=>{tc=[...e.touches];},{passive:true});
 canvas.addEventListener('touchmove',e=>{
   e.preventDefault();
-  if(e.touches.length===1&&touches.length===1){
-    rotY_+=(e.touches[0].clientX-touches[0].clientX)*0.005;
-    rotX_+=(e.touches[0].clientY-touches[0].clientY)*0.005;
-  } else if(e.touches.length===2&&touches.length===2){
-    const d0=Math.hypot(touches[0].clientX-touches[1].clientX,touches[0].clientY-touches[1].clientY);
+  if(e.touches.length===1&&tc.length===1){
+    rY+=(e.touches[0].clientX-tc[0].clientX)*.005;
+    rX+=(e.touches[0].clientY-tc[0].clientY)*.005;
+  }else if(e.touches.length===2&&tc.length===2){
+    const d0=Math.hypot(tc[0].clientX-tc[1].clientX,tc[0].clientY-tc[1].clientY);
     const d1=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-    zoom-=(d1-d0)*0.01; zoom=Math.max(-20,Math.min(-0.5,zoom));
+    zoom-=(d1-d0)*.01;zoom=Math.max(-20,Math.min(-.3,zoom));
   }
-  touches=[...e.touches];
+  tc=[...e.touches];
 },{passive:false});
 
-// ── Render loop ───────────────────────────────────────────────────────────────
+// ── Render ───────────────────────────────────────────────────────────────────
 gl.enable(gl.DEPTH_TEST);
 gl.clearColor(1,1,1,1);
 
-function render(){
+function draw(){
   gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  if(!meshes.length){requestAnimationFrame(draw);return;}
 
-  if(meshGroups.length){
-    const asp=canvas.width/canvas.height;
-    const proj=persp(Math.PI/4,asp,0.01,100);
-    const view=trans(panX,panY,zoom);
-    const model=mul(rotX(rotX_),rotY(rotY_));
-    const mv=mul(view,model);
-    const mvp=mul(proj,mv);
+  const asp=canvas.width/canvas.height;
+  const proj=M.persp(Math.PI/4,asp,.01,100);
+  const view=M.tr(pX,pY,zoom);
+  const model=M.mul(M.rx(rX),M.ry(rY));
+  const mv=M.mul(view,model);
+  const mvp=M.mul(proj,mv);
 
-    gl.uniformMatrix4fv(loc.mvp,false,mvp);
-    gl.uniformMatrix4fv(loc.nmat,false,model);
+  gl.uniformMatrix4fv(L.mvp,false,mvp);
+  gl.uniformMatrix3fv(L.nm,false,M.nm(model));
 
-    for(const g of meshGroups){
-      gl.bindBuffer(gl.ARRAY_BUFFER,g.buf);
-      const stride=8*4;
-      gl.enableVertexAttribArray(loc.pos);  gl.vertexAttribPointer(loc.pos,3,gl.FLOAT,false,stride,0);
-      gl.enableVertexAttribArray(loc.norm); gl.vertexAttribPointer(loc.norm,3,gl.FLOAT,false,stride,12);
-      gl.enableVertexAttribArray(loc.uv);   gl.vertexAttribPointer(loc.uv,2,gl.FLOAT,false,stride,24);
-
-      if(g.texId){
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D,g.texId);
-        gl.uniform1i(loc.tex,0);
-        gl.uniform1i(loc.hasTex,1);
-      } else {
-        gl.uniform1i(loc.hasTex,0);
-        gl.uniform3fv(loc.color,new Float32Array(g.color));
-      }
-      gl.drawArrays(gl.TRIANGLES,0,g.count);
+  for(const g of meshes){
+    gl.bindBuffer(gl.ARRAY_BUFFER,g.buf);
+    const st=32; // 8 floats * 4 bytes
+    gl.enableVertexAttribArray(L.pos); gl.vertexAttribPointer(L.pos,3,gl.FLOAT,false,st,0);
+    gl.enableVertexAttribArray(L.nrm); gl.vertexAttribPointer(L.nrm,3,gl.FLOAT,false,st,12);
+    gl.enableVertexAttribArray(L.uv);  gl.vertexAttribPointer(L.uv,2,gl.FLOAT,false,st,24);
+    if(g.texId){
+      gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,g.texId);
+      gl.uniform1i(L.tex,0);gl.uniform1i(L.mode,1);
+    }else{
+      gl.uniform1i(L.mode,0);gl.uniform3fv(L.col,g.color);
     }
+    gl.drawArrays(gl.TRIANGLES,0,g.count);
   }
-  requestAnimationFrame(render);
+  requestAnimationFrame(draw);
 }
-render();
+draw();
 </script>
 </body>
 </html>
